@@ -8,19 +8,19 @@ import runpod
 from pathlib import Path
 
 # Add OpenVoice to Python path
-sys.path.append("/workspace/OpenVoice")
+sys.path.append("/app/OpenVoice")
 
 from openvoice import se_extractor
 from openvoice.api import ToneColorConverter
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
-CKPT_DIR = "/workspace/OpenVoice/checkpoints_v2/converter"
+CKPT_DIR = "/app/OpenVoice/checkpoints_v2/converter"
 
-# Load converter once at boot
+# Load converter once during cold start
 print(f"Loading OpenVoice V2 onto {DEVICE}...")
 tone_color_converter = ToneColorConverter(f"{CKPT_DIR}/config.json", device=DEVICE)
 tone_color_converter.load_ckpt(f"{CKPT_DIR}/checkpoint.pth")
-print("OpenVoice V2 loaded and ready!")
+print("OpenVoice V2 loaded successfully!")
 
 def handler(job):
     job_input = job.get("input", {})
@@ -39,18 +39,19 @@ def handler(job):
         out_wav = tmp / "converted.wav"
         out_mp3 = tmp / "converted.mp3"
 
+        # Write base64 inputs to disk
         src_raw.write_bytes(base64.b64decode(source_b64))
         ref_raw.write_bytes(base64.b64decode(reference_b64))
 
-        # Standardize both to 16kHz mono WAV using pre-installed ffmpeg
+        # Standardize audio to 16kHz mono WAV using ffmpeg
         os.system(f"ffmpeg -y -i {src_raw} -ac 1 -ar 16000 {src_wav} >/dev/null 2>&1")
         os.system(f"ffmpeg -y -i {ref_raw} -ac 1 -ar 16000 {ref_wav} >/dev/null 2>&1")
 
-        # Extract speaker embeddings
+        # Extract speaker tone embeddings
         source_se, _ = se_extractor.get_se(str(src_wav), tone_color_converter, vad=False)
         target_se, _ = se_extractor.get_se(str(ref_wav), tone_color_converter, vad=False)
 
-        # Tone color conversion
+        # Run tone color conversion
         tone_color_converter.convert(
             audio_src_path=str(src_wav),
             src_se=source_se,
@@ -60,9 +61,9 @@ def handler(job):
         )
 
         if not out_wav.exists() or out_wav.stat().st_size == 0:
-            return {"error": "Conversion failed to generate audio output."}
+            return {"error": "Tone color conversion failed to generate audio."}
 
-        # Compress output to MP3 for quick transfer
+        # Convert to MP3 for efficient transfer
         os.system(f"ffmpeg -y -i {out_wav} -codec:a libmp3lame -qscale:a 2 {out_mp3} >/dev/null 2>&1")
         out_b64 = base64.b64encode(out_mp3.read_bytes()).decode("ascii")
 
