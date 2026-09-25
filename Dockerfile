@@ -6,28 +6,39 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
+# 1. System audio dependencies, compilers, and pkg-config
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ffmpeg \
     wget \
     unzip \
     build-essential \
+    pkg-config \
+    libavformat-dev \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libavfilter-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# OpenVoice V2 was released for Python 3.9.
-# Create precisely that environment; avoid OpenVoice's TTS-only dependencies.
+# 2. Python 3.9 Conda environment
 RUN conda create -y -n openvoice python=3.9 && conda clean -afy
 
 SHELL ["conda", "run", "-n", "openvoice", "/bin/bash", "-c"]
 
+# 3. Install PyAV pre-compiled via conda (prevents pip C-compilation failure)
+RUN conda install -y -c conda-forge "av>=10.0.0" && conda clean -afy
+
 RUN python -m pip install --upgrade "pip<24.1" "setuptools<70" wheel
 
+# 4. Clone OpenVoice repository
 RUN git clone --depth 1 https://github.com/myshell-ai/OpenVoice.git /app/OpenVoice
 
 WORKDIR /app/OpenVoice
 
-# Only dependencies needed by ToneColorConverter / se_extractor for V2V.
-# No `pip install -e .`: it installs the problematic full TTS stack.
+# 5. Install runtime dependencies
 RUN pip install \
     "numpy==1.22.0" \
     "librosa==0.9.1" \
@@ -39,7 +50,7 @@ RUN pip install \
     "inflect==7.0.0" \
     "runpod==1.7.0"
 
-# Fetch the official V2 converter weights.
+# 6. Download model checkpoint weights (~200MB)
 RUN wget -q --show-progress \
     https://myshell-public-repo-hosting.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip \
     -O /tmp/openvoice-v2.zip && \
